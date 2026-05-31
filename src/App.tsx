@@ -1,10 +1,13 @@
 import './App.css'
-import { CadApp } from './cad/CadApp'
+import { AuthProvider } from './auth/AuthProvider'
+import { CadWorkspace } from './CadWorkspace'
 
 function App() {
   return (
     <div className="appRoot">
-      <CadApp />
+      <AuthProvider>
+        <CadWorkspace />
+      </AuthProvider>
     </div>
   )
 }

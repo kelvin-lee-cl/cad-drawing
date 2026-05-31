@@ -300,14 +300,14 @@ function drawEntityDimensions(
   units: Units,
   preview = false,
 ) {
-  const labels = getEntityDimensions(e, units, vp.zoom)
-  const fontSize = Math.max(10, Math.min(14, vp.zoom * 0.35))
-  ctx.font = `${fontSize}px ui-monospace, monospace`
+  const labels = getEntityDimensions(e, units, vp)
+  ctx.font = '11px ui-monospace, monospace'
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'center'
 
   for (const label of labels) {
-    const s = w2s(vp, label.at)
+    const anchor = w2s(vp, label.anchor)
+    const s = { x: anchor.x + label.screenOffset.x, y: anchor.y + label.screenOffset.y }
     ctx.save()
     ctx.fillStyle = preview ? 'rgba(99, 179, 255, 0.9)' : 'rgba(255, 255, 255, 0.85)'
     if (label.orientation === 'vertical') {

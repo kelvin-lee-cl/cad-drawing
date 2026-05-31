@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { CadDoc, CadEntity, LineEntity, RectEntity, Tool, Units, Vec2, Viewport } from './types'
+import type { SaveLogEntry } from '../firebase/projectService'
+import type { CadDoc, CadEntity, LineEntity, RectEntity, Tool, Vec2, Viewport } from './types'
 import {
   DIM_FIELDS_BY_KIND,
   dimFieldLabel,
@@ -27,6 +28,7 @@ import { applyRectFillet, rectFilletRadiusRange } from './rectFillet'
 import { applyTrimByRect } from './trimRect'
 import { cloneDoc, MAX_UNDO_STEPS } from './history'
 import { newId } from './id'
+import { createEmptyDoc } from './serialize'
 import { DEFAULT_TEXT_FONT, defaultTextHeight, TEXT_FONT_OPTIONS } from './textFonts'
 import { dist, snapOrtho, sub } from './geometry'
 import { drawScene, pickGridStepWorld } from './render'
@@ -42,7 +44,6 @@ import {
   zoomAt,
 } from './viewport'
 
-const DEFAULT_UNITS: Units = 'mm'
 const DRAW_TOOLS: Tool[] = ['select', 'pan', 'line', 'rect', 'circle', 'text']
 const MODIFY_TOOLS: Tool[] = ['move', 'rotate', 'scale', 'trim', 'fillet', 'offset']
 const SELECTION_MODIFY_TOOLS: Tool[] = ['move', 'rotate', 'scale', 'offset', 'fillet']
@@ -64,14 +65,32 @@ const TOOL_LABELS: Record<Tool, string> = {
 const MARQUEE_MIN_PX = 4
 
 function makeDefaultDoc(): CadDoc {
-  const layerId = newId('layer')
-  return {
-    units: DEFAULT_UNITS,
-    worldUnitsLabel: DEFAULT_UNITS,
-    layers: [{ id: layerId, name: 'Layer 1', color: '#63b3ff', visible: true }],
-    activeLayerId: layerId,
-    entities: [],
-  }
+  return createEmptyDoc()
+}
+
+export type CadAppProps = {
+  readOnly?: boolean
+  loadedDoc?: CadDoc | null
+  loadedDocKey?: number
+  userLabel?: string
+  onSignOut?: () => void
+  canEdit?: boolean
+  lockHolder?: string
+  onSave?: (doc: CadDoc) => void | Promise<void>
+  saving?: boolean
+  saveError?: string | null
+  lastSavedMessage?: string | null
+  lastSavedBy?: string
+  saveLogs?: SaveLogEntry[]
+}
+
+function formatLogTime(date: Date): string {
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 type Draft =
@@ -114,8 +133,25 @@ function effectiveLocked(values: Partial<Record<DimField, string>>, locked: Lock
   }
 }
 
-export function CadApp() {
-  const [doc, setDoc] = useState<CadDoc>(() => makeDefaultDoc())
+export function CadApp({
+  readOnly = false,
+  loadedDoc,
+  loadedDocKey,
+  userLabel,
+  onSignOut,
+  canEdit = true,
+  lockHolder,
+  onSave,
+  saving = false,
+  saveError,
+  lastSavedMessage,
+  lastSavedBy,
+  saveLogs = [],
+}: CadAppProps = {}) {
+  const readOnlyRef = useRef(readOnly)
+  readOnlyRef.current = readOnly
+
+  const [doc, setDoc] = useState<CadDoc>(() => loadedDoc ?? makeDefaultDoc())
   const [tool, setTool] = useState<Tool>('line')
   const [viewport, setViewport] = useState<Viewport>(() => ({
     panPx: { x: 0, y: 0 },
@@ -173,6 +209,27 @@ export function CadApp() {
   const undoStackRef = useRef<CadDoc[]>([])
   const redoStackRef = useRef<CadDoc[]>([])
 
+  useEffect(() => {
+    if (loadedDoc == null || loadedDocKey == null) return
+    const next = structuredClone(loadedDoc)
+    setDoc({
+      ...next,
+      entities: next.entities.map((entity) => ({ ...entity, selected: false })),
+    })
+    undoStackRef.current = []
+    redoStackRef.current = []
+    setDraft(null)
+    setPreviewEnd(null)
+    setTextPlacement(null)
+    setEditSession(null)
+  }, [loadedDocKey, loadedDoc])
+
+  useEffect(() => {
+    if (readOnly && tool !== 'select' && tool !== 'pan') {
+      setTool('select')
+    }
+  }, [readOnly, tool])
+
   const pushUndoSnapshot = useCallback(() => {
     undoStackRef.current.push(cloneDoc(docRef.current))
     if (undoStackRef.current.length > MAX_UNDO_STEPS) undoStackRef.current.shift()
@@ -181,6 +238,7 @@ export function CadApp() {
 
   const commitDoc = useCallback(
     (updater: (d: CadDoc) => CadDoc) => {
+      if (readOnlyRef.current) return
       pushUndoSnapshot()
       setDoc(updater)
     },
@@ -614,6 +672,7 @@ export function CadApp() {
 
   const activateTool = useCallback(
     (next: Tool) => {
+      if (readOnly && next !== 'select' && next !== 'pan') return
       setTool(next)
       cancelDraft()
       setTextPlacement(null)
@@ -626,7 +685,7 @@ export function CadApp() {
         requestAnimationFrame(() => modifyInputRef.current?.focus())
       }
     },
-    [cancelDraft, clearEditSession, deleteSelected, selectedCount],
+    [cancelDraft, clearEditSession, deleteSelected, readOnly, selectedCount],
   )
 
   const finishMarqueeSelect = useCallback(
@@ -682,6 +741,12 @@ export function CadApp() {
         clearEditSession()
         clearSelection()
         return
+      }
+
+      if (readOnlyRef.current && !inTextField) {
+        if (e.key === 'Delete' || e.key === 'Backspace') return
+        const cmdOrCtrl = e.metaKey || e.ctrlKey
+        if (cmdOrCtrl && (e.key === 'v' || e.key === 'z' || e.key === 'y')) return
       }
 
       if ((e.key === 'Delete' || e.key === 'Backspace') && !inTextField) {
@@ -981,6 +1046,7 @@ export function CadApp() {
 
   const onPointerDown: React.PointerEventHandler<HTMLCanvasElement> = (e) => {
     if (!canvasRef.current || e.button !== 0) return
+    if (readOnly && tool !== 'pan' && tool !== 'select') return
     canvasRef.current.setPointerCapture(e.pointerId)
 
     const pScreen = screenFromPointer(e)
@@ -1172,10 +1238,12 @@ export function CadApp() {
   }
 
   const toggleLayer = (layerId: string) => {
-    commitDoc((d) => ({
+    const updater = (d: CadDoc) => ({
       ...d,
       layers: d.layers.map((l) => (l.id === layerId ? { ...l, visible: !l.visible } : l)),
-    }))
+    })
+    if (readOnly) setDoc(updater)
+    else commitDoc(updater)
   }
 
   const setActiveLayer = (layerId: string) => {
@@ -1300,9 +1368,27 @@ export function CadApp() {
 
   return (
     <div className="cadRoot">
+      {readOnly && lockHolder && (
+        <div className="cadBanner cadBannerView">
+          View only — {lockHolder} is currently editing. You are seeing the latest saved version.
+        </div>
+      )}
+      {!readOnly && canEdit && (
+        <div className="cadBanner cadBannerEdit">You have edit access. Save to update the shared drawing.</div>
+      )}
       <header className="cadTopbar">
         <div className="cadTitle">Simple CAD</div>
         <div className="cadTopbarRight">
+          {userLabel && (
+            <span className="cadMeta">
+              User: <b>{userLabel}</b>
+            </span>
+          )}
+          {lastSavedBy && (
+            <span className="cadMeta">
+              Last saved by: <b>{lastSavedBy}</b>
+            </span>
+          )}
           <span className="cadMeta">
             Units: <b>{doc.units}</b>
           </span>
@@ -1314,13 +1400,33 @@ export function CadApp() {
               Selected: <b>{selectedCount}</b>
             </span>
           )}
-          {draft && (
+          {canEdit && onSave && (
+            <button
+              type="button"
+              className="cadBtnSmall cadSaveBtn"
+              disabled={saving}
+              onClick={() => void onSave(docRef.current)}
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          )}
+          {onSignOut && (
+            <button type="button" className="cadBtnSmall" onClick={onSignOut}>
+              Sign out
+            </button>
+          )}
+          {draft && !readOnly && (
             <button type="button" className="cadBtnSmall" onClick={cancelDraft}>
               Cancel (Esc)
             </button>
           )}
         </div>
       </header>
+      {(saveError || lastSavedMessage) && (
+        <div className={`cadStatus ${saveError ? 'cadStatusError' : 'cadStatusOk'}`}>
+          {saveError ?? lastSavedMessage}
+        </div>
+      )}
 
       <div className="cadMain">
         <aside className="cadLeft">
@@ -1331,6 +1437,7 @@ export function CadApp() {
                 key={t}
                 type="button"
                 className={tool === t ? 'cadBtn active' : 'cadBtn'}
+                disabled={readOnly && t !== 'select' && t !== 'pan'}
                 onClick={() => activateTool(t)}
               >
                 {TOOL_LABELS[t]}
@@ -1342,6 +1449,7 @@ export function CadApp() {
           <div className="cadToolGrid cadModifyGrid">
             {MODIFY_TOOLS.map((t) => {
               const disabled =
+                readOnly ||
                 (t === 'fillet' && !filletTarget) ||
                 (t === 'offset' && offsettableSelected.length === 0) ||
                 (SELECTION_MODIFY_TOOLS.includes(t) &&
@@ -1598,9 +1706,11 @@ export function CadApp() {
           />
           <div className="cadPanelTitle cadLayerHeader">
             <span>Layers</span>
-            <button type="button" className="cadBtnSmall" onClick={addLayer}>
-              +
-            </button>
+            {!readOnly && (
+              <button type="button" className="cadBtnSmall" onClick={addLayer}>
+                +
+              </button>
+            )}
           </div>
           <div className="cadLayerList">
             {doc.layers.map((layer) => (
@@ -1626,12 +1736,13 @@ export function CadApp() {
                   className="swatch"
                   style={{ background: layer.color }}
                   aria-label={`Change color for ${layer.name}`}
+                  disabled={readOnly}
                   onClick={(e) => {
                     e.stopPropagation()
-                    openLayerColorPicker(layer.id, layer.color)
+                    if (!readOnly) openLayerColorPicker(layer.id, layer.color)
                   }}
                 />
-                {editingLayerId === layer.id ? (
+                {editingLayerId === layer.id && !readOnly ? (
                   <input
                     type="text"
                     className="cadLayerNameInput"
@@ -1650,8 +1761,10 @@ export function CadApp() {
                   <button
                     type="button"
                     className="name"
+                    disabled={readOnly}
                     onClick={(e) => {
                       e.stopPropagation()
+                      if (readOnly) return
                       setEditingLayerId(layer.id)
                       setEditingLayerName(layer.name)
                     }}
@@ -1659,7 +1772,7 @@ export function CadApp() {
                     {layer.name}
                   </button>
                 )}
-                {doc.layers.length > 1 && (
+                {!readOnly && doc.layers.length > 1 && (
                   <button
                     type="button"
                     className="cadLayerDelete"
@@ -1675,6 +1788,21 @@ export function CadApp() {
               </div>
             ))}
           </div>
+
+          {saveLogs.length > 0 && (
+            <>
+              <div className="cadPanelTitle cadSpaced">Save log</div>
+              <ul className="cadSaveLogList">
+                {saveLogs.map((entry) => (
+                  <li key={entry.id} className="cadSaveLogItem">
+                    <span className="cadSaveLogWho">{entry.name || entry.email}</span>
+                    <span className="cadSaveLogWhen">{formatLogTime(entry.at)}</span>
+                    <span className="cadSaveLogVer">v{entry.version}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </aside>
       </div>
     </div>
