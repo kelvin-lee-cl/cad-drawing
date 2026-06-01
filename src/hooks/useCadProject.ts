@@ -3,6 +3,8 @@ import type { User } from 'firebase/auth'
 import { createEmptyDoc } from '../cad/serialize'
 import type { CadDoc } from '../cad/types'
 import {
+  clearSaveLogs,
+  deleteSaveLog,
   isLockActive,
   renewEditLock,
   releaseEditLock,
@@ -31,6 +33,8 @@ export type CadProjectState = {
   saveError: string | null
   lastSavedMessage: string | null
   save: (doc: CadDoc) => Promise<void>
+  deleteSaveLog: (logId: string) => Promise<void>
+  clearSaveLogs: () => Promise<void>
 }
 
 export function useCadProject(user: User | null): CadProjectState {
@@ -168,6 +172,26 @@ export function useCadProject(user: User | null): CadProjectState {
     [],
   )
 
+  const deleteSaveLogEntry = useCallback(async (logId: string) => {
+    if (!userRef.current) return
+    setSaveError(null)
+    try {
+      await deleteSaveLog(logId)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to delete log entry')
+    }
+  }, [])
+
+  const clearAllSaveLogs = useCallback(async () => {
+    if (!userRef.current) return
+    setSaveError(null)
+    try {
+      await clearSaveLogs()
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to clear save log')
+    }
+  }, [])
+
   const activeLock = isLockActive(lock) ? lock : null
   const readOnly = !canEdit
 
@@ -184,5 +208,7 @@ export function useCadProject(user: User | null): CadProjectState {
     saveError,
     lastSavedMessage,
     save,
+    deleteSaveLog: deleteSaveLogEntry,
+    clearSaveLogs: clearAllSaveLogs,
   }
 }

@@ -82,6 +82,8 @@ export type CadAppProps = {
   lastSavedMessage?: string | null
   lastSavedBy?: string
   saveLogs?: SaveLogEntry[]
+  onDeleteSaveLog?: (logId: string) => void | Promise<void>
+  onClearSaveLogs?: () => void | Promise<void>
 }
 
 function formatLogTime(date: Date): string {
@@ -147,6 +149,8 @@ export function CadApp({
   lastSavedMessage,
   lastSavedBy,
   saveLogs = [],
+  onDeleteSaveLog,
+  onClearSaveLogs,
 }: CadAppProps = {}) {
   const readOnlyRef = useRef(readOnly)
   readOnlyRef.current = readOnly
@@ -1791,12 +1795,33 @@ export function CadApp({
 
           {saveLogs.length > 0 && (
             <>
-              <div className="cadPanelTitle cadSpaced">Save log</div>
+              <div className="cadSaveLogHeader cadSpaced">
+                <div className="cadPanelTitle">Save log</div>
+                {canEdit && onClearSaveLogs && (
+                  <button
+                    type="button"
+                    className="cadBtnSmall cadSaveLogClear"
+                    onClick={() => void onClearSaveLogs()}
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
               <ul className="cadSaveLogList">
                 {saveLogs.map((entry) => (
                   <li key={entry.id} className="cadSaveLogItem">
                     <span className="cadSaveLogWho">{entry.name || entry.email}</span>
                     <span className="cadSaveLogWhen">{formatLogTime(entry.at)}</span>
+                    {canEdit && onDeleteSaveLog && (
+                      <button
+                        type="button"
+                        className="cadSaveLogDelete"
+                        aria-label={`Delete save log v${entry.version}`}
+                        onClick={() => void onDeleteSaveLog(entry.id)}
+                      >
+                        ×
+                      </button>
+                    )}
                     <span className="cadSaveLogVer">v{entry.version}</span>
                   </li>
                 ))}

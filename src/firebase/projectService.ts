@@ -1,8 +1,10 @@
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
+  getDocs,
   limit,
   onSnapshot,
   orderBy,
@@ -247,4 +249,13 @@ export async function loadProjectOnce(): Promise<ProjectSnapshot | null> {
 
 export function isLockActive(lock: EditLock | null, now = Date.now()): boolean {
   return !!lock && lock.expiresAt > now
+}
+
+export async function deleteSaveLog(logId: string): Promise<void> {
+  await deleteDoc(doc(logsCollection(), logId))
+}
+
+export async function clearSaveLogs(): Promise<void> {
+  const snap = await getDocs(logsCollection())
+  await Promise.all(snap.docs.map((entry) => deleteDoc(entry.ref)))
 }

@@ -11,8 +11,8 @@ service cloud.firestore {
     }
 
     match /cad/project/saveLogs/{logId} {
-      allow read, create: if request.auth != null;
-      allow update, delete: if false;
+      allow read, create, delete: if request.auth != null;
+      allow update: if false;
     }
   }
 }

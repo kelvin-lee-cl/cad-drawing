@@ -57,6 +57,8 @@ export function CadWorkspace() {
       lastSavedMessage={project.lastSavedMessage}
       lastSavedBy={project.project?.updatedByName || project.project?.updatedByEmail}
       saveLogs={project.saveLogs}
+      onDeleteSaveLog={(logId) => project.deleteSaveLog(logId)}
+      onClearSaveLogs={() => project.clearSaveLogs()}
     />
   )
 }

@@ -1,6 +1,6 @@
 import type { CadDoc, CadEntity, CadLayer, Units, Vec2, Viewport } from './types'
 import { textFontCss } from './textFonts'
-import { getEntityDimensions } from './dimensions'
+import { collectDimensionLabels, layoutDimensionLabels } from './dimensions'
 import { rectFromAB } from './geometry'
 import { effectiveRectFillet } from './rectFillet'
 import { screenToWorld, worldToScreen } from './viewport'
@@ -47,14 +47,22 @@ export function drawScene(
   drawGrid(ctx, vp, doc.units)
   drawAxes(ctx, vp)
 
+  const dimEntities: CadEntity[] = []
   for (const e of doc.entities) {
     const layer = layerById(doc, e.layerId)
     if (!layer?.visible) continue
     const color = e.selected ? '#ffd166' : layer.color
     drawEntity(ctx, vp, e, color, false)
-    if (showDimensions && (e.type === 'line' || e.type === 'rect' || e.type === 'circle')) {
-      drawEntityDimensions(ctx, vp, e, doc.units)
+    if (
+      showDimensions &&
+      (e.type === 'line' || e.type === 'rect' || e.type === 'circle')
+    ) {
+      dimEntities.push(e)
     }
+  }
+
+  if (showDimensions && dimEntities.length > 0) {
+    drawEntitiesDimensions(ctx, vp, dimEntities, doc.units)
   }
 
   if (transformPreview) {
@@ -68,7 +76,7 @@ export function drawScene(
     const layer = layerById(doc, preview.layerId)
     drawEntity(ctx, vp, preview, layer?.color ?? '#63b3ff', true)
     if (showDimensions && (preview.type === 'line' || preview.type === 'rect' || preview.type === 'circle')) {
-      drawEntityDimensions(ctx, vp, preview, doc.units, true)
+      drawEntitiesDimensions(ctx, vp, [preview], doc.units, true)
     }
   }
 
@@ -293,14 +301,16 @@ function drawEntity(
   ctx.setLineDash([])
 }
 
-function drawEntityDimensions(
+function drawEntitiesDimensions(
   ctx: CanvasRenderingContext2D,
   vp: Viewport,
-  e: CadEntity,
+  entities: CadEntity[],
   units: Units,
   preview = false,
 ) {
-  const labels = getEntityDimensions(e, units, vp)
+  const raw = collectDimensionLabels(entities, units, vp)
+  const labels = layoutDimensionLabels(ctx, raw, vp, entities)
+
   ctx.font = '11px ui-monospace, monospace'
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'center'
@@ -320,23 +330,25 @@ function drawEntityDimensions(
     ctx.restore()
   }
 
-  if (e.type === 'line') {
-    drawLinearDimensionGuides(ctx, vp, e.a, e.b)
-  } else if (e.type === 'rect') {
-    const r = rectFromAB(e.a, e.b)
-    drawLinearDimensionGuides(ctx, vp, { x: r.x1, y: r.y1 }, { x: r.x2, y: r.y1 })
-    drawLinearDimensionGuides(ctx, vp, { x: r.x2, y: r.y1 }, { x: r.x2, y: r.y2 })
-  } else if (e.type === 'circle') {
-    const c = w2s(vp, e.c)
-    const edge = w2s(vp, { x: e.c.x + e.r, y: e.c.y })
-    ctx.strokeStyle = preview ? 'rgba(99, 179, 255, 0.5)' : 'rgba(255, 255, 255, 0.35)'
-    ctx.lineWidth = 1
-    ctx.setLineDash([3, 3])
-    ctx.beginPath()
-    ctx.moveTo(c.x, c.y)
-    ctx.lineTo(edge.x, edge.y)
-    ctx.stroke()
-    ctx.setLineDash([])
+  for (const e of entities) {
+    if (e.type === 'line') {
+      drawLinearDimensionGuides(ctx, vp, e.a, e.b)
+    } else if (e.type === 'rect') {
+      const r = rectFromAB(e.a, e.b)
+      drawLinearDimensionGuides(ctx, vp, { x: r.x1, y: r.y1 }, { x: r.x2, y: r.y1 })
+      drawLinearDimensionGuides(ctx, vp, { x: r.x2, y: r.y1 }, { x: r.x2, y: r.y2 })
+    } else if (e.type === 'circle') {
+      const c = w2s(vp, e.c)
+      const edge = w2s(vp, { x: e.c.x + e.r, y: e.c.y })
+      ctx.strokeStyle = preview ? 'rgba(99, 179, 255, 0.5)' : 'rgba(255, 255, 255, 0.35)'
+      ctx.lineWidth = 1
+      ctx.setLineDash([3, 3])
+      ctx.beginPath()
+      ctx.moveTo(c.x, c.y)
+      ctx.lineTo(edge.x, edge.y)
+      ctx.stroke()
+      ctx.setLineDash([])
+    }
   }
 }
 
